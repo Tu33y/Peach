@@ -7,8 +7,15 @@ from alembic import context
 # Add parent path to import models
 sys.path.insert(0, '.')
 
-from backend.app.infrastructure.database import Base
-from backend.app.core.config import settings
+from app.infrastructure.database import Base
+from app.core.config import settings
+from app.domain.models import (
+    DBUser, DBProfile, DBCategory, DBService, DBServiceImage,
+    DBSellerAvailability, DBOrder, DBWallet, DBTransaction,
+    DBChat, DBMessage, DBReview, DBReport, DBAuditLog,
+    DBVerificationRequest, DBDocument, DBConsentRecord,
+    DBSafetyEvent, DBCheckIn, DBReputationScore
+)
 
 config = context.config
 if config.config_file_name is not None:
