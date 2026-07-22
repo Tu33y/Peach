@@ -10,6 +10,8 @@ from app.application.payment_service import PaymentService
 from app.application.events import event_bus
 from app.core.config import settings
 from app.core.logging import logger
+from datetime import datetime
+from app.application.reputation_service import calculate_seller_reputation, calculate_customer_reputation
 
 router = APIRouter(tags=["Orders & Bookings"])
 
@@ -37,7 +39,9 @@ def create_order_request(
             service_id=service.id,
             price=service.price,
             platform_fee=platform_fee,
-            status="pending"
+            status="pending",
+            scheduled_start_time=order_data.scheduled_start_time,
+            scheduled_end_time=order_data.scheduled_end_time
         )
         order_repo.create(order)
         db.commit()
@@ -99,6 +103,7 @@ def update_order_status(
                 raise HTTPException(status_code=400, detail="Client has insufficient funds to lock in escrow")
 
             order.status = "accepted"
+            order.actual_start_time = datetime.utcnow()
             background_tasks.add_task(event_bus.publish, "PaymentLocked", {"order_id": order.id})
 
         elif new_status == "completed":
@@ -112,7 +117,12 @@ def update_order_status(
                 raise HTTPException(status_code=500, detail="Escrow release transaction failed")
 
             order.status = "completed"
+            order.actual_completion_time = datetime.utcnow()
             background_tasks.add_task(event_bus.publish, "OrderCompleted", {"order_id": order.id})
+
+            # Recalculate seller and customer reputations
+            calculate_seller_reputation(order.provider_id, db)
+            calculate_customer_reputation(order.client_id, db)
 
         elif new_status == "cancelled":
             if old_status == "pending":
@@ -124,6 +134,9 @@ def update_order_status(
                 order.status = "cancelled"
             else:
                 raise HTTPException(status_code=400, detail="Cannot cancel completed orders")
+
+            # Recalculate customer reputation on cancel
+            calculate_customer_reputation(order.client_id, db)
 
         elif new_status == "disputed":
             if old_status != "accepted":
@@ -177,31 +190,8 @@ def create_review(
         )
         review_repo.create(review)
 
-        reviews = review_repo.get_by_reviewee_id(order.provider_id)
-        avg_rating = sum(r.rating for r in reviews) / len(reviews)
-
-        provider_user = user_repo.get_by_id(order.provider_id)
-        if provider_user and provider_user.profile:
-            profile = provider_user.profile[0] if isinstance(provider_user.profile, list) else provider_user.profile
-            profile.rating_average = avg_rating
-            profile.services_count = len(provider_user.services)
-
-            days = (datetime.utcnow() - provider_user.created_at).days
-            profile.days_on_platform = days
-
-            score = (avg_rating * 10) + (len(reviews) * 5) + (days * 0.1)
-            profile.reputation_score = score
-            db.add(profile)
-
-            if score > 150:
-                provider_user.reliability_level = "professional"
-            elif score > 80:
-                provider_user.reliability_level = "reliable"
-            elif provider_user.is_verified:
-                provider_user.reliability_level = "verified"
-            else:
-                provider_user.reliability_level = "new_user"
-            db.add(provider_user)
+        # Trigger live reputation update via reputation calculation service
+        calculate_seller_reputation(order.provider_id, db)
 
         db.commit()
         db.refresh(review)

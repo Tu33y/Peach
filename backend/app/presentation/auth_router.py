@@ -3,10 +3,11 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.infrastructure.database import get_db
 from app.infrastructure.repositories import UserRepository, ProfileRepository, WalletRepository
-from app.domain.models import DBUser, DBProfile, DBWallet
+from app.domain.models import DBUser, DBProfile, DBWallet, DBConsentRecord, DBVerificationRequest, DBDocument
 from app.application.auth_service import hash_password, verify_password, create_jwt_token, decode_jwt_token, generate_totp_secret, verify_totp_code, generate_totp_qr_base64
 from app.presentation.schemas import UserCreate, UserLogin, UserResponse, TokenResponse
 from app.core.logging import logger
+from datetime import datetime
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -31,13 +32,16 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
 
-    # Use atomicity: wrap all register entities in single commit transaction block
     try:
         hashed = hash_password(user_data.password)
         new_user = DBUser(
             username=user_data.username,
             password_hash=hashed,
-            role=user_data.role
+            role=user_data.role,
+            is_verified=False,
+            is_adult_verified=False,
+            identity_verified=False,
+            verification_status="pending" if user_data.role == "provider" else "approved"
         )
         user_repo.create(new_user)
 
@@ -49,6 +53,25 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
         new_wallet = DBWallet(user_id=new_user.id, balance=1000.0)
         wallet_repo.create(new_wallet)
 
+        # Log consent agreements
+        if user_data.accepted_terms:
+            consent_terms = DBConsentRecord(
+                user_id=new_user.id,
+                consent_type="terms",
+                version=user_data.consent_version,
+                ip_address=user_data.ip_address or "127.0.0.1"
+            )
+            db.add(consent_terms)
+
+        if user_data.accepted_privacy:
+            consent_privacy = DBConsentRecord(
+                user_id=new_user.id,
+                consent_type="privacy",
+                version=user_data.consent_version,
+                ip_address=user_data.ip_address or "127.0.0.1"
+            )
+            db.add(consent_privacy)
+
         db.commit()
         db.refresh(new_user)
         logger.info(f"User registered successfully: {new_user.username}")
@@ -56,7 +79,7 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         logger.error(f"Failed to register user: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal registration failure")
+        raise HTTPException(status_code=500, detail=f"Internal registration failure: {str(e)}")
 
 @router.post("/login", response_model=TokenResponse)
 def login(login_data: UserLogin, db: Session = Depends(get_db)):
@@ -82,6 +105,18 @@ def login(login_data: UserLogin, db: Session = Depends(get_db)):
     access = create_jwt_token({"sub": user.id, "role": user.role})
     refresh = create_jwt_token({"sub": user.id, "role": user.role})
     return TokenResponse(access_token=access, refresh_token=refresh, token_type="bearer")
+
+@router.get("/me", response_model=UserResponse)
+def get_me(current_user: DBUser = Depends(get_current_user)):
+    return current_user
+
+@router.post("/role")
+def update_role(role: str, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    if role not in ["client", "provider", "admin"]:
+        raise HTTPException(status_code=400, detail="Invalid role type")
+    current_user.role = role
+    db.commit()
+    return {"status": "success", "role": role}
 
 @router.post("/2fa/setup")
 def setup_2fa(current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):

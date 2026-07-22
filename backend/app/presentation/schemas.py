@@ -8,6 +8,10 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     role: str = "client" # "client", "provider", "admin"
+    accepted_terms: bool = True
+    accepted_privacy: bool = True
+    consent_version: str = "v1.0"
+    ip_address: Optional[str] = None
 
 class UserLogin(UserBase):
     password: str
@@ -20,6 +24,9 @@ class UserResponse(UserBase):
     status: str
     reliability_level: str
     is_verified: bool
+    is_adult_verified: bool
+    identity_verified: bool
+    verification_status: str
     two_factor_enabled: bool
 
     class Config:
@@ -56,12 +63,48 @@ class CategoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+# Advanced Services, Images & Availability schemas
+class ServiceImageCreate(BaseModel):
+    url: str
+    order: Optional[int] = 0
+
+class ServiceImageResponse(BaseModel):
+    id: str
+    service_id: str
+    url: str
+    order: int
+
+    class Config:
+        from_attributes = True
+
+class SellerAvailabilityCreate(BaseModel):
+    day: str
+    start_time: str
+    end_time: str
+    available: Optional[bool] = True
+
+class SellerAvailabilityResponse(BaseModel):
+    id: str
+    seller_id: str
+    day: str
+    start_time: str
+    end_time: str
+    available: bool
+
+    class Config:
+        from_attributes = True
+
 class ServiceCreate(BaseModel):
     title: str
     description: str
     price: float
     category_id: Optional[str] = None
-    location_general: Optional[str] = None
+    city: Optional[str] = None
+    postcode: Optional[str] = None
+    languages: Optional[str] = None
+    rules: Optional[str] = None
+    images: Optional[List[ServiceImageCreate]] = []
 
 class ServiceResponse(BaseModel):
     id: str
@@ -71,10 +114,15 @@ class ServiceResponse(BaseModel):
     description: str
     price: float
     is_available: bool
-    location_general: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    city: Optional[str] = None
+    postcode: Optional[str] = None
+    languages: Optional[str] = None
+    rules: Optional[str] = None
+    status: str
     created_at: datetime
+    images: List[ServiceImageResponse] = []
 
     class Config:
         from_attributes = True
@@ -82,6 +130,8 @@ class ServiceResponse(BaseModel):
 
 class OrderCreate(BaseModel):
     service_id: str
+    scheduled_start_time: Optional[datetime] = None
+    scheduled_end_time: Optional[datetime] = None
 
 class OrderResponse(BaseModel):
     id: str
@@ -93,6 +143,10 @@ class OrderResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    scheduled_start_time: Optional[datetime] = None
+    scheduled_end_time: Optional[datetime] = None
+    actual_start_time: Optional[datetime] = None
+    actual_completion_time: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -122,17 +176,33 @@ class TransactionResponse(BaseModel):
         from_attributes = True
 
 
+# Chat & Message schemas
 class MessageCreate(BaseModel):
-    recipient_id: str
+    recipient_id: Optional[str] = None
     text: str
+    chat_id: Optional[str] = None
+    attachment: Optional[str] = None
 
 class MessageResponse(BaseModel):
     id: str
+    chat_id: Optional[str] = None
     sender_id: str
-    recipient_id: str
+    recipient_id: Optional[str] = None
     text: str
+    attachment: Optional[str] = None
     is_read: bool
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ChatResponse(BaseModel):
+    id: str
+    user1: str
+    user2: str
+    booking_id: Optional[str] = None
+    created_at: datetime
+    messages: List[MessageResponse] = []
 
     class Config:
         from_attributes = True
@@ -180,6 +250,85 @@ class AuditLogResponse(BaseModel):
     target_id: Optional[str] = None
     previous_value: Optional[str] = None
     new_value: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# Compliance/Legal/Safety Schemas
+class ConsentRecordCreate(BaseModel):
+    consent_type: str
+    version: str
+    ip_address: Optional[str] = None
+
+class ConsentRecordResponse(BaseModel):
+    id: str
+    user_id: str
+    consent_type: str
+    version: str
+    accepted_at: datetime
+    ip_address: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class VerificationRequestCreate(BaseModel):
+    type: str # e.g. "identity", "age"
+
+class VerificationRequestResponse(BaseModel):
+    id: str
+    user_id: str
+    type: str
+    status: str
+    submitted_at: datetime
+    reviewed_at: Optional[datetime] = None
+    reviewer_id: Optional[str] = None
+    reason: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class DocumentResponse(BaseModel):
+    id: str
+    user_id: str
+    document_type: str
+    file_url: str
+    status: str
+    uploaded_at: datetime
+    verified_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class SafetyEventCreate(BaseModel):
+    booking_id: Optional[str] = None
+    type: str # e.g. "SOS"
+    location: Optional[str] = None
+
+class SafetyEventResponse(BaseModel):
+    id: str
+    user_id: str
+    booking_id: Optional[str] = None
+    type: str
+    location: Optional[str] = None
+    created_at: datetime
+    status: str
+
+    class Config:
+        from_attributes = True
+
+class CheckInCreate(BaseModel):
+    booking_id: str
+    type: str # e.g. "pre-appointment", "post-appointment"
+    location: Optional[str] = None
+
+class CheckInResponse(BaseModel):
+    id: str
+    booking_id: str
+    user_id: str
+    type: str
+    timestamp: datetime
+    location: Optional[str] = None
 
     class Config:
         from_attributes = True
